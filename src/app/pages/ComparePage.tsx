@@ -71,6 +71,10 @@ const ISSUE_TAGS = [
   "可用性差",
 ] as const;
 
+function getCreativeStrengthDisplay(pair: ImagePair) {
+  return pair.referenceStrength ?? pair.creativeStrength;
+}
+
 function ImageCanvas({ src, alt, zoom, emptyText }: { src: string; alt: string; zoom: number; emptyText: string }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
@@ -580,8 +584,7 @@ export function ComparePage() {
               <InfoRow label="工具类型" value={pair.toolType || "—"} />
               <InfoRow label="任务数量" value={pair.requestedCount !== null ? String(pair.requestedCount) : String(pair.subTaskCount)} />
               <InfoRow label="增强模式" value={pair.enhanced === null ? "—" : pair.enhanced ? "开启" : "关闭"} />
-              <InfoRow label="创意强度" value={pair.creativeStrength !== null ? String(pair.creativeStrength) : "—"} />
-              <InfoRow label="参考强度" value={pair.referenceStrength !== null ? String(pair.referenceStrength) : "—"} />
+              <InfoRow label="创意强度" value={getCreativeStrengthDisplay(pair) !== null ? String(getCreativeStrengthDisplay(pair)) : "—"} />
               <InfoRow label="辅助参考图" value={pair.auxImageCount ? `${pair.auxImageCount} 张` : "无"} />
               <InfoRow label="包含遮罩" value={pair.hasMask ? "是" : "否"} />
             </div>

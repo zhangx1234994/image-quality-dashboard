@@ -57,6 +57,10 @@ function formatStrength(value: number | null) {
   return `${value}`;
 }
 
+function getCreativeStrengthDisplay(pair: ImagePair) {
+  return pair.referenceStrength ?? pair.creativeStrength;
+}
+
 function getStatusRank(status: TaskStatus) {
   if (status === "失败") return 3;
   if (status === "处理中") return 2;
@@ -115,7 +119,7 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
   const metricItems = [
     { label: "耗时", value: formatDuration(pair.durationSeconds) },
     { label: "原图尺寸", value: formatSize(pair.originalWidth, pair.originalHeight) },
-    ...(pair.operationType === "图片裂变" ? [{ label: "创意强度", value: formatStrength(pair.creativeStrength) }] : []),
+    ...(pair.operationType === "图片裂变" ? [{ label: "创意强度", value: formatStrength(getCreativeStrengthDisplay(pair)) }] : []),
   ];
 
   return (
