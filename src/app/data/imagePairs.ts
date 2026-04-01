@@ -8,6 +8,8 @@ export interface ImagePair {
   taskId: string;
   operationType: string;
   userId: string;
+  username: string;
+  nickname: string;
   date: string;
   status: TaskStatus;
   original: string;

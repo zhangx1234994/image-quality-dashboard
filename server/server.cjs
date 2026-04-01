@@ -81,41 +81,47 @@ function appendCommonFilters(sql, params, filters = {}) {
     const { user_id, action, status, start_date, end_date, search } = filters;
 
     if (user_id) {
-        sql += ' AND user_id LIKE ?';
-        params.push(`%${user_id}%`);
+        sql += ` AND (
+            wt.user_id LIKE ?
+            OR COALESCE(u.username, '') LIKE ?
+            OR COALESCE(u.nickname, '') LIKE ?
+        )`;
+        params.push(`%${user_id}%`, `%${user_id}%`, `%${user_id}%`);
     }
 
     const normalizedAction = normalizeAction(action);
     if (normalizedAction) {
-        sql += ' AND action = ?';
+        sql += ' AND wt.action = ?';
         params.push(normalizedAction);
     }
 
     const normalizedStatus = normalizeStatus(status);
     if (normalizedStatus !== undefined) {
-        sql += ' AND status = ?';
+        sql += ' AND wt.status = ?';
         params.push(normalizedStatus);
     }
 
     if (start_date) {
-        sql += ' AND created_at >= ?';
+        sql += ' AND wt.created_at >= ?';
         params.push(`${start_date} 00:00:00`);
     }
 
     if (end_date) {
-        sql += ' AND created_at <= ?';
+        sql += ' AND wt.created_at <= ?';
         params.push(`${end_date} 23:59:59`);
     }
 
     if (search) {
         sql += ` AND (
-            sub_task_id LIKE ?
-            OR task_id LIKE ?
-            OR CAST(id AS CHAR) LIKE ?
-            OR user_id LIKE ?
-            OR prompt_msg LIKE ?
+            wt.sub_task_id LIKE ?
+            OR wt.task_id LIKE ?
+            OR CAST(wt.id AS CHAR) LIKE ?
+            OR wt.user_id LIKE ?
+            OR COALESCE(u.username, '') LIKE ?
+            OR COALESCE(u.nickname, '') LIKE ?
+            OR wt.prompt_msg LIKE ?
         )`;
-        params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     return sql;
@@ -193,18 +199,21 @@ app.get('/api/tasks', async (req, res) => {
         const { limit = 10, offset = 0 } = req.query;
         
         // 只使用数据库查询，支持分页加载，保留筛选功能
-        let sql = `SELECT * FROM workflow_task WHERE sub_task_id IS NOT NULL AND sub_task_id != ''`;
+        let sql = `SELECT wt.*, u.username AS username, u.nickname AS nickname
+            FROM workflow_task wt
+            LEFT JOIN users u ON u.user_id = wt.user_id
+            WHERE wt.sub_task_id IS NOT NULL AND wt.sub_task_id != ''`;
         const params = [];
 
         sql = appendCommonFilters(sql, params, req.query);
 
         // 先获取总数
-        const countSql = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
+        const countSql = sql.replace('SELECT wt.*, u.username AS username, u.nickname AS nickname', 'SELECT COUNT(DISTINCT wt.id) as total');
         const [countResult] = await pool.query(countSql, params);
         const total = countResult[0]?.total || 0;
 
         // 排序和分页 - 使用id排序避免内存问题，按id降序获取最新数据
-        sql += ' ORDER BY id DESC LIMIT ? OFFSET ?';
+        sql += ' ORDER BY wt.id DESC LIMIT ? OFFSET ?';
         params.push(parseInt(limit), parseInt(offset));
 
         const [tasks] = await pool.query(sql, params);
@@ -342,6 +351,8 @@ function toImagePair(task) {
         taskId: task.task_id || '',
         operationType: operationType,
         userId: task.user_id || '',
+        username: task.username || '',
+        nickname: task.nickname || '',
         date: date,
         originalCount: originalImages.length,
         resultCount: resultImages.length,
@@ -418,29 +429,35 @@ app.get('/api/image-pairs', async (req, res) => {
         const normalizedStatus = normalizeStatus(status);
         
         // 基础查询条件
-        let sql = `SELECT * FROM workflow_task WHERE sub_task_id IS NOT NULL AND sub_task_id != ''`;
+        let sql = `SELECT wt.*, u.username AS username, u.nickname AS nickname
+            FROM workflow_task wt
+            LEFT JOIN users u ON u.user_id = wt.user_id
+            WHERE wt.sub_task_id IS NOT NULL AND wt.sub_task_id != ''`;
         const params = [];
         
         // 只有成功状态才要求有结果图
         if (normalizedStatus === 2) {
-            sql += ' AND JSON_LENGTH(images) > 0';
+            sql += ' AND JSON_LENGTH(wt.images) > 0';
         }
 
         sql = appendCommonFilters(sql, params, req.query);
 
         // 排序和分页
-        sql += ' ORDER BY id DESC LIMIT ? OFFSET ?';
+        sql += ' ORDER BY wt.id DESC LIMIT ? OFFSET ?';
         params.push(parseInt(limit), parseInt(offset));
         
         const [tasks] = await pool.query(sql, params);
         
         // 计算总数
-        let countSql = `SELECT COUNT(*) as count FROM workflow_task WHERE sub_task_id IS NOT NULL AND sub_task_id != ''`;
+        let countSql = `SELECT COUNT(DISTINCT wt.id) as count
+            FROM workflow_task wt
+            LEFT JOIN users u ON u.user_id = wt.user_id
+            WHERE wt.sub_task_id IS NOT NULL AND wt.sub_task_id != ''`;
         const countParams = [];
         
         // 只有成功状态才要求有结果图
         if (normalizedStatus === 2) {
-            countSql += ' AND JSON_LENGTH(images) > 0';
+            countSql += ' AND JSON_LENGTH(wt.images) > 0';
         }
 
         countSql = appendCommonFilters(countSql, countParams, req.query);
@@ -469,7 +486,11 @@ app.get('/api/image-pairs', async (req, res) => {
 app.get('/api/image-pairs/:id', async (req, res) => {
     try {
         const [results] = await pool.query(
-            'SELECT * FROM workflow_task WHERE id = ? AND sub_task_id IS NOT NULL AND sub_task_id != "" LIMIT 1',
+            `SELECT wt.*, u.username AS username, u.nickname AS nickname
+            FROM workflow_task wt
+            LEFT JOIN users u ON u.user_id = wt.user_id
+            WHERE wt.id = ? AND wt.sub_task_id IS NOT NULL AND wt.sub_task_id != ""
+            LIMIT 1`,
             [req.params.id]
         );
 

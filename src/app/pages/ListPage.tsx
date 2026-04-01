@@ -48,6 +48,15 @@ const STATUS_STYLE: Record<TaskStatus, { bg: string; color: string; dot: string 
   处理中: { bg: "rgba(59,130,246,0.12)", color: "#60a5fa", dot: "#3b82f6" },
 };
 
+function getUserDisplay(pair: ImagePair) {
+  return pair.nickname || pair.username || pair.userId || "未知用户";
+}
+
+function formatStrength(value: number | null) {
+  if (value === null || Number.isNaN(value)) return "—";
+  return `${value}`;
+}
+
 function getStatusRank(status: TaskStatus) {
   if (status === "失败") return 3;
   if (status === "处理中") return 2;
@@ -102,6 +111,12 @@ function MiniThumb({ src, side }: { src: string; side: "left" | "right" }) {
 function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
   const statusStyle = STATUS_STYLE[pair.status];
   const errorSummary = getErrorSummary(pair.errorMessage);
+  const userDisplay = getUserDisplay(pair);
+  const metricItems = [
+    { label: "耗时", value: formatDuration(pair.durationSeconds) },
+    { label: "原图尺寸", value: formatSize(pair.originalWidth, pair.originalHeight) },
+    ...(pair.operationType === "图片裂变" ? [{ label: "创意强度", value: formatStrength(pair.creativeStrength) }] : []),
+  ];
 
   return (
     <button
@@ -150,13 +165,8 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-1.5">
-          {[
-            { label: "耗时", value: formatDuration(pair.durationSeconds) },
-            { label: "原图尺寸", value: formatSize(pair.originalWidth, pair.originalHeight) },
-            { label: "输入/输出", value: `${pair.originalCount}/${pair.resultCount}` },
-            { label: "任务数", value: `${pair.subTaskCount}` },
-          ].map((item) => (
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${metricItems.length}, minmax(0, 1fr))` }}>
+          {metricItems.map((item) => (
             <div key={item.label} className="rounded-lg px-2 py-1.5" style={{ background: "#111d2e" }}>
               <p style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>{item.label}</p>
               <p style={{ fontSize: 12, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.value}</p>
@@ -166,7 +176,7 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
 
         <div className="flex items-center justify-between">
           <span style={{ fontSize: 11, color: "#334155" }}>{pair.date}</span>
-          <span style={{ fontSize: 11, color: "#475569" }}>{pair.userId.slice(0, 8)}</span>
+          <span style={{ fontSize: 11, color: "#475569", maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userDisplay}</span>
         </div>
       </div>
     </button>
@@ -175,6 +185,7 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
 
 function TableRow({ pair, onClick, index }: { pair: ImagePair; onClick: () => void; index: number }) {
   const statusStyle = STATUS_STYLE[pair.status];
+  const userDisplay = getUserDisplay(pair);
 
   return (
     <tr
@@ -209,8 +220,12 @@ function TableRow({ pair, onClick, index }: { pair: ImagePair; onClick: () => vo
       </td>
       <td className="px-3 py-3"><span style={{ fontSize: 12, color: "#cbd5e1" }}>{formatDuration(pair.durationSeconds)}</span></td>
       <td className="px-3 py-3"><span style={{ fontSize: 12, color: "#94a3b8" }}>{formatSize(pair.originalWidth, pair.originalHeight)}</span></td>
-      <td className="px-3 py-3"><span style={{ fontSize: 12, color: "#94a3b8" }}>{pair.originalCount}/{pair.resultCount}</span></td>
-      <td className="px-3 py-3"><span style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>{pair.userId}</span></td>
+      <td className="px-3 py-3">
+        <div className="min-w-0">
+          <div style={{ fontSize: 12, color: "#cbd5e1", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userDisplay}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontFamily: "monospace", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pair.userId}</div>
+        </div>
+      </td>
       <td className="px-3 py-3"><span style={{ fontSize: 11, color: "#475569" }}>{pair.date}</span></td>
       <td className="px-4 py-3">
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1" style={{ color: "#6366f1", fontSize: 12 }}>
@@ -496,8 +511,8 @@ export function ListPage() {
               </div>
 
               <div>
-                <label style={labelStyle}>用户ID</label>
-                <input type="text" placeholder="输入用户ID…" value={filters.userId} onChange={(e) => updateFilter("userId", e.target.value)} style={inputStyle} />
+                <label style={labelStyle}>用户ID / 用户名</label>
+                <input type="text" placeholder="输入用户ID、用户名…" value={filters.userId} onChange={(e) => updateFilter("userId", e.target.value)} style={inputStyle} />
               </div>
 
               <div className="h-px" style={{ background: "#1a2332" }} />
@@ -620,7 +635,7 @@ export function ListPage() {
             )}
             {filters.userId && (
               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs" style={{ background: "rgba(99,102,241,0.1)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.2)" }}>
-                用户: {filters.userId.slice(0, 10)}…
+                用户: {filters.userId.length > 10 ? `${filters.userId.slice(0, 10)}…` : filters.userId}
                 <button onClick={() => updateFilter("userId", "")}><X size={9} /></button>
               </span>
             )}
@@ -669,7 +684,7 @@ export function ListPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse" style={{ minWidth: 1180 }}>
+                <table className="w-full border-collapse" style={{ minWidth: 1080 }}>
                   <thead>
                     <tr style={{ background: "#0a1020", borderBottom: "1px solid #1a2332" }}>
                       <th className="px-4 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>预览</th>
@@ -679,8 +694,7 @@ export function ListPage() {
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("status")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "status" ? "#818cf8" : "#475569", fontWeight: 500 }}>状态 <SortIcon sort="status" /></div></th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("duration")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "duration" ? "#818cf8" : "#475569", fontWeight: 500 }}>耗时 <SortIcon sort="duration" /></div></th>
                       <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>原图尺寸</th>
-                      <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>输入/输出</th>
-                      <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>用户ID</th>
+                      <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>用户</th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("date")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "date" ? "#818cf8" : "#475569", fontWeight: 500 }}>日期 <SortIcon sort="date" /></div></th>
                       <th className="px-4 py-3" />
                     </tr>
