@@ -1,5 +1,7 @@
 # Node.js dependencies
 node_modules/
+server/node_modules/
+node/
 
 # Log files
 *.log
@@ -14,7 +16,6 @@ pids
 *.pid.lock
 
 # Package manager files
-package-lock.json
 yarn.lock
 
 # Editor directories and files
@@ -38,3 +39,4 @@ build/
 *.tmp
 *.temp
 *.zip
+*.csv
