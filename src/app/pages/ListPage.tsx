@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronUp,
   Columns2,
+  Database,
   LayoutGrid,
   List,
   Search,
@@ -18,6 +19,7 @@ import { formatDuration, formatSize, getErrorSummary, getListThumbnail, getSmall
 type SortKey = "date" | "duration" | "status" | "action" | "model" | "name";
 type SortDir = "asc" | "desc";
 type ViewLayout = "grid" | "table";
+type DatabaseKey = "prod" | "test";
 
 interface FilterState {
   search: string;
@@ -41,6 +43,11 @@ const DEFAULT_FILTERS: FilterState = {
   dateStart: "",
   dateEnd: "",
 };
+
+const DATABASE_OPTIONS: Array<{ key: DatabaseKey; label: string }> = [
+  { key: "prod", label: "正式库" },
+  { key: "test", label: "测试库" },
+];
 
 const STATUS_STYLE: Record<TaskStatus, { bg: string; color: string; dot: string }> = {
   成功: { bg: "rgba(34,197,94,0.12)", color: "#4ade80", dot: "#22c55e" },
@@ -67,8 +74,12 @@ function getStatusRank(status: TaskStatus) {
   return 1;
 }
 
-function openCompare(id: number) {
-  const url = `/compare/${id}`;
+function getInitialDatabase(): DatabaseKey {
+  return localStorage.getItem("image-dashboard-db") === "test" ? "test" : "prod";
+}
+
+function openCompare(id: number, database: DatabaseKey) {
+  const url = `/compare/${id}?db=${database}`;
   const newWindow = window.open(url, "_blank");
   if (!newWindow || newWindow.closed || typeof newWindow.closed === "undefined") {
     window.location.href = url;
@@ -242,6 +253,7 @@ function TableRow({ pair, onClick, index }: { pair: ImagePair; onClick: () => vo
 
 export function ListPage() {
   const [layout, setLayout] = useState<ViewLayout>("grid");
+  const [database, setDatabase] = useState<DatabaseKey>(getInitialDatabase);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -256,7 +268,7 @@ export function ListPage() {
   const pageSize = 50;
 
   useEffect(() => {
-    fetch("/api/actions")
+    fetch(`/api/actions?db=${database}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.data)) {
@@ -266,7 +278,11 @@ export function ListPage() {
       .catch((err) => {
         console.error("获取操作类型失败:", err);
       });
-  }, []);
+  }, [database]);
+
+  useEffect(() => {
+    localStorage.setItem("image-dashboard-db", database);
+  }, [database]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -274,6 +290,7 @@ export function ListPage() {
     setError(null);
 
     const params = new URLSearchParams({
+      db: database,
       limit: pageSize.toString(),
       offset: ((page - 1) * pageSize).toString(),
     });
@@ -304,7 +321,12 @@ export function ListPage() {
       });
 
     return () => controller.abort();
-  }, [filters, page]);
+  }, [database, filters, page]);
+
+  const updateDatabase = (value: DatabaseKey) => {
+    setPage(1);
+    setDatabase(value);
+  };
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setPage(1);
@@ -440,6 +462,25 @@ export function ListPage() {
           </div>
           <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>图看板</span>
           <span className="ml-1 px-1.5 py-0.5 rounded text-xs" style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8" }}>真实任务视图</span>
+        </div>
+
+        <div className="flex items-center gap-1 p-0.5 rounded-lg" style={{ background: "#111d2e", border: "1px solid #1a2332" }}>
+          <Database size={12} style={{ color: "#64748b", marginLeft: 6 }} />
+          {DATABASE_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              onClick={() => updateDatabase(option.key)}
+              className="px-2.5 py-1 rounded-md transition-all"
+              style={{
+                background: database === option.key ? "#2563eb" : "transparent",
+                color: database === option.key ? "#fff" : "#94a3b8",
+                fontSize: 12,
+                fontWeight: database === option.key ? 600 : 500,
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         <div className="w-px h-5" style={{ background: "#1a2332" }} />
@@ -683,7 +724,7 @@ export function ListPage() {
             ) : layout === "grid" ? (
               <div className="p-5 grid gap-4" style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}>
                 {filteredSorted.map((pair) => (
-                  <GridCard key={pair.id} pair={pair} onClick={() => openCompare(pair.id)} />
+                  <GridCard key={pair.id} pair={pair} onClick={() => openCompare(pair.id, database)} />
                 ))}
               </div>
             ) : (
@@ -705,7 +746,7 @@ export function ListPage() {
                   </thead>
                   <tbody>
                     {filteredSorted.map((pair, index) => (
-                      <TableRow key={pair.id} pair={pair} index={index} onClick={() => openCompare(pair.id)} />
+                      <TableRow key={pair.id} pair={pair} index={index} onClick={() => openCompare(pair.id, database)} />
                     ))}
                   </tbody>
                 </table>

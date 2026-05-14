@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -28,6 +28,7 @@ import { formatDateTime, formatDuration, formatSize, getErrorSummary, getSmallTh
 
 type ViewMode = "sidebyside" | "slider" | "overlay" | "diff";
 type QualityRating = "优秀" | "良好" | "一般" | "问题";
+type DatabaseKey = "prod" | "test";
 
 interface Annotation {
   rating: QualityRating | null;
@@ -73,6 +74,10 @@ const ISSUE_TAGS = [
 
 function getCreativeStrengthDisplay(pair: ImagePair) {
   return pair.referenceStrength ?? pair.creativeStrength;
+}
+
+function getInitialDatabase(): DatabaseKey {
+  return localStorage.getItem("image-dashboard-db") === "test" ? "test" : "prod";
 }
 
 function ImageCanvas({ src, alt, zoom, emptyText }: { src: string; alt: string; zoom: number; emptyText: string }) {
@@ -280,6 +285,8 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function ComparePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const database: DatabaseKey = searchParams.get("db") === "test" ? "test" : getInitialDatabase();
   const [imagePairs, setImagePairs] = useState<ImagePair[]>([]);
   const [currentPair, setCurrentPair] = useState<ImagePair | null>(null);
   const [loading, setLoading] = useState(true);
@@ -297,13 +304,20 @@ export function ComparePage() {
   const currentIndex = allPairs.findIndex((pair) => pair.id === Number(id));
 
   useEffect(() => {
+    localStorage.setItem("image-dashboard-db", database);
+  }, [database]);
+
+  useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
 
+    const detailParams = new URLSearchParams({ db: database });
+    const listParams = new URLSearchParams({ db: database, limit: "200" });
+
     Promise.all([
-      fetch(`/api/image-pairs/${id}`, { signal: controller.signal }).then((res) => res.json()),
-      fetch("/api/image-pairs?limit=200", { signal: controller.signal }).then((res) => res.json()),
+      fetch(`/api/image-pairs/${id}?${detailParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
+      fetch(`/api/image-pairs?${listParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
     ])
       .then(([detailData, listData]) => {
         if (!detailData.success || !detailData.data) {
@@ -332,7 +346,7 @@ export function ComparePage() {
       });
 
     return () => controller.abort();
-  }, [id]);
+  }, [database, id]);
 
   const getAnnotation = (pairId: number): Annotation => annotations[pairId] || { rating: null, issues: [], note: "", submitted: false };
 
@@ -371,7 +385,7 @@ export function ComparePage() {
 
   const goTo = (index: number) => {
     if (index >= 0 && index < allPairs.length) {
-      navigate(`/compare/${allPairs[index].id}`);
+      navigate(`/compare/${allPairs[index].id}?db=${database}`);
     }
   };
 
@@ -505,7 +519,7 @@ export function ComparePage() {
               const active = item.id === pair.id;
               const itemStatus = STATUS_STYLE[item.status];
               return (
-                <button key={item.id} onClick={() => navigate(`/compare/${item.id}`)} className="w-full rounded-lg overflow-hidden transition-all text-left" style={{ background: active ? "#101d30" : "#111b2a", border: `1px solid ${active ? "#3b82f6" : "#1a2332"}` }}>
+                <button key={item.id} onClick={() => navigate(`/compare/${item.id}?db=${database}`)} className="w-full rounded-lg overflow-hidden transition-all text-left" style={{ background: active ? "#101d30" : "#111b2a", border: `1px solid ${active ? "#3b82f6" : "#1a2332"}` }}>
                   <div className="relative w-full" style={{ height: 64 }}>
                     <div className="absolute inset-y-0 left-0 w-1/2" style={{ background: "#0a0f1a" }}>
                       {item.original ? <img src={getSmallThumbnail(item.original)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" /> : null}

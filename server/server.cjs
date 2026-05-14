@@ -17,13 +17,12 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// 数据库连接配置 - 使用用户提供的正确地址
-const dbConfig = {
+// 数据库连接配置 - 同一实例下按请求切换正式库/测试库
+const baseDbConfig = {
     host: 'rm-bp1r74bu12nt8ibs50o.mysql.rds.aliyuncs.com',
     port: 3306,
     user: 'kanban',
     password: 'Chrd5@0987',
-    database: 'ai_design_prod',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
@@ -31,20 +30,39 @@ const dbConfig = {
     charset: 'utf8mb4'
 };
 
+const databaseOptions = {
+    prod: { label: '正式库', database: 'ai_design_prod' },
+    test: { label: '测试库', database: 'ai_design_test' }
+};
+
 // 创建数据库连接池
-const pool = mysql.createPool(dbConfig);
+const pools = Object.fromEntries(
+    Object.entries(databaseOptions).map(([key, option]) => [
+        key,
+        mysql.createPool({ ...baseDbConfig, database: option.database })
+    ])
+);
+
+function getDatabaseKey(value) {
+    return value === 'test' ? 'test' : 'prod';
+}
+
+function getPool(req) {
+    return pools[getDatabaseKey(req.query.db)];
+}
 
 // 测试数据库连接
 async function testConnection() {
-    try {
-        const connection = await pool.getConnection();
-        console.log('✅ 数据库连接测试成功!');
-        connection.release();
-        console.log('📊 系统将使用数据库作为唯一数据源');
-    } catch (error) {
-        console.error('❌ 数据库连接测试失败:', error.message);
-        console.error('⚠️  请检查网络连接或数据库配置');
+    for (const [key, option] of Object.entries(databaseOptions)) {
+        try {
+            const connection = await pools[key].getConnection();
+            console.log(`✅ ${option.label}连接测试成功: ${option.database}`);
+            connection.release();
+        } catch (error) {
+            console.error(`❌ ${option.label}连接测试失败:`, error.message);
+        }
     }
+    console.log('📊 系统将按页面选择切换正式库/测试库');
 }
 
 // 任务类型映射
@@ -130,6 +148,7 @@ function appendCommonFilters(sql, params, filters = {}) {
 // API: 获取统计数据
 app.get('/api/stats', async (req, res) => {
     try {
+        const pool = getPool(req);
         // 只使用数据库查询
         const [totalResult] = await pool.query(
             'SELECT COUNT(*) as total FROM workflow_task WHERE sub_task_id IS NOT NULL AND sub_task_id != ""'
@@ -169,6 +188,7 @@ app.get('/api/stats', async (req, res) => {
 // API: 获取所有操作类型
 app.get('/api/actions', async (req, res) => {
     try {
+        const pool = getPool(req);
         // 只使用数据库查询
         const [results] = await pool.query(
             'SELECT DISTINCT action FROM workflow_task WHERE action IS NOT NULL AND sub_task_id IS NOT NULL AND sub_task_id != "" ORDER BY action'
@@ -196,6 +216,7 @@ app.get('/api/actions', async (req, res) => {
 // API: 获取任务列表(支持筛选) - 只查询子任务(图片生成质量对比)
 app.get('/api/tasks', async (req, res) => {
     try {
+        const pool = getPool(req);
         const { limit = 10, offset = 0 } = req.query;
         
         // 只使用数据库查询，支持分页加载，保留筛选功能
@@ -388,6 +409,7 @@ function toImagePair(task) {
 // API: 获取单个任务详情
 app.get('/api/tasks/:id', async (req, res) => {
     try {
+        const pool = getPool(req);
         const { id } = req.params;
         
         // 只使用数据库查询
@@ -425,6 +447,7 @@ app.get('/api/tasks/:id', async (req, res) => {
 // API: 获取图片对比数据（适配前端 ImagePair 接口）
 app.get('/api/image-pairs', async (req, res) => {
     try {
+        const pool = getPool(req);
         const { limit = 50, offset = 0, status } = req.query;
         const normalizedStatus = normalizeStatus(status);
         
@@ -485,6 +508,7 @@ app.get('/api/image-pairs', async (req, res) => {
 
 app.get('/api/image-pairs/:id', async (req, res) => {
     try {
+        const pool = getPool(req);
         const [results] = await pool.query(
             `SELECT wt.*, u.username AS username, u.nickname AS nickname
             FROM workflow_task wt
@@ -518,12 +542,15 @@ app.get('/api/image-pairs/:id', async (req, res) => {
 // 健康检查
 app.get('/api/health', async (req, res) => {
     try {
+        const pool = getPool(req);
+        const dbKey = getDatabaseKey(req.query.db);
         // 只检查数据库连接
         await pool.query('SELECT 1');
         res.json({
             success: true,
             message: '服务运行正常',
-            database: '已连接'
+            database: databaseOptions[dbKey].database,
+            databaseLabel: databaseOptions[dbKey].label
         });
     } catch (error) {
         res.status(500).json({
