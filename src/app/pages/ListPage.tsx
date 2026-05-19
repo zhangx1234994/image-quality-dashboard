@@ -77,6 +77,21 @@ function getCreativeStrengthDisplay(pair: ImagePair) {
   return pair.referenceStrength ?? pair.creativeStrength;
 }
 
+function getParamValue(pair: ImagePair, label: string) {
+  return (pair.keyParams || []).find((item) => item.label === label)?.value || "";
+}
+
+function getKeyParamSummary(pair: ImagePair) {
+  if (pair.operationType !== "图片裂变") return "—";
+  const mode = getParamValue(pair, "裂变模式");
+  const primary =
+    (pair.keyParams || []).find((item) => ["参考强度", "变化强度", "比例"].includes(item.label)) ||
+    (pair.keyParams || []).find((item) => item.label === "生成数量");
+
+  if (mode && primary) return `${mode} · ${primary.label.replace("强度", "")} ${primary.value}`;
+  return mode || (primary ? `${primary.label} ${primary.value}` : formatStrength(getCreativeStrengthDisplay(pair)));
+}
+
 function getStatusRank(status: TaskStatus) {
   if (status === "失败") return 3;
   if (status === "处理中") return 2;
@@ -139,7 +154,7 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
   const metricItems = [
     { label: "耗时", value: formatDuration(pair.durationSeconds) },
     { label: "原图尺寸", value: formatSize(pair.originalWidth, pair.originalHeight) },
-    ...(pair.operationType === "图片裂变" ? [{ label: "创意强度", value: formatStrength(getCreativeStrengthDisplay(pair)) }] : []),
+    ...(pair.operationType === "图片裂变" ? [{ label: "关键参数", value: getKeyParamSummary(pair) }] : []),
   ];
 
   return (
@@ -235,6 +250,9 @@ function TableRow({ pair, onClick, index }: { pair: ImagePair; onClick: () => vo
       </td>
       <td className="px-3 py-3">
         <span style={{ fontSize: 11, color: "#94a3b8" }}>{pair.model || "未知"}</span>
+      </td>
+      <td className="px-3 py-3">
+        <span style={{ fontSize: 11, color: "#94a3b8", display: "block", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getKeyParamSummary(pair)}</span>
       </td>
       <td className="px-3 py-3">
         <span className="flex items-center gap-1 w-fit px-2 py-0.5 rounded-full" style={{ background: statusStyle.bg, color: statusStyle.color, fontSize: 11 }}>
@@ -764,13 +782,14 @@ export function ListPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse" style={{ minWidth: 1080 }}>
+                <table className="w-full border-collapse" style={{ minWidth: 1180 }}>
                   <thead>
                     <tr style={{ background: "#0a1020", borderBottom: "1px solid #1a2332" }}>
                       <th className="px-4 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>预览</th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("name")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "name" ? "#818cf8" : "#475569", fontWeight: 500 }}>子任务 <SortIcon sort="name" /></div></th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("action")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "action" ? "#818cf8" : "#475569", fontWeight: 500 }}>操作类型 <SortIcon sort="action" /></div></th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("model")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "model" ? "#818cf8" : "#475569", fontWeight: 500 }}>模型 <SortIcon sort="model" /></div></th>
+                      <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>关键参数</th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("status")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "status" ? "#818cf8" : "#475569", fontWeight: 500 }}>状态 <SortIcon sort="status" /></div></th>
                       <th className="px-3 py-3 text-left cursor-pointer" onClick={() => toggleSort("duration")}><div className="flex items-center gap-1.5" style={{ fontSize: 11, color: sortKey === "duration" ? "#818cf8" : "#475569", fontWeight: 500 }}>耗时 <SortIcon sort="duration" /></div></th>
                       <th className="px-3 py-3 text-left" style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>原图尺寸</th>

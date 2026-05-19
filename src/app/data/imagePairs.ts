@@ -8,6 +8,7 @@ export interface ImagePair {
   taskId: string;
   operationType: string;
   actionSecond: string;
+  keyParams: Array<{ label: string; value: string }>;
   userId: string;
   username: string;
   nickname: string;

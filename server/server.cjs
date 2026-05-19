@@ -115,6 +115,12 @@ const actionLabelToValue = Object.fromEntries(
     Object.entries(actionMap).map(([value, label]) => [label, value])
 );
 
+const actionSecondMap = {
+    ComfyUIVL0514: 'ComfyUI 版本',
+    GPTImage2VL: '商业模型',
+    CozeTextEnhance: '文生图裂变'
+};
+
 function normalizeStatus(status) {
     const statusMap = { '成功': 2, '失败': 1, '处理中': 0 };
     if (status === undefined || status === null || status === '') {
@@ -374,6 +380,65 @@ function getNumber(value) {
     return null;
 }
 
+function formatParamValue(value) {
+    if (value === undefined || value === null || value === '') {
+        return '';
+    }
+    if (typeof value === 'boolean') {
+        return value ? '开启' : '关闭';
+    }
+    return String(value);
+}
+
+function pushParam(items, label, value) {
+    const formatted = formatParamValue(value);
+    if (formatted) {
+        items.push({ label, value: formatted });
+    }
+}
+
+function getActionSecond(task, workflowParams) {
+    return task.action_second || workflowParams.actionSecond || workflowParams.action_second || '';
+}
+
+function getKeyParams(task, workflowParams) {
+    const items = [];
+    const actionSecond = getActionSecond(task, workflowParams);
+
+    if (task.action === 'fission' || workflowParams.toolType === 'fission') {
+        pushParam(items, '裂变模式', actionSecondMap[actionSecond] || actionSecond || '旧版裂变');
+        pushParam(items, '生成数量', workflowParams.count);
+
+        if (actionSecond === 'ComfyUIVL0514') {
+            pushParam(items, '版本', workflowParams.actionVersion);
+            pushParam(items, '参考强度', workflowParams.reference_strength);
+            pushParam(items, '参考锁定', workflowParams.reference_lock);
+            pushParam(items, '色彩锁定', workflowParams.color_lock);
+            pushParam(items, 'Profile', workflowParams.profile);
+            pushParam(items, '增强模式', workflowParams.enhanced);
+            return items;
+        }
+
+        if (actionSecond === 'GPTImage2VL') {
+            pushParam(items, '版本', workflowParams.actionVersion);
+            pushParam(items, '变化强度', workflowParams.variation_strength);
+            pushParam(items, '尺寸', workflowParams.size);
+            pushParam(items, '质量', workflowParams.quality);
+            return items;
+        }
+
+        if (actionSecond === 'CozeTextEnhance') {
+            pushParam(items, '比例', workflowParams.ratio);
+            return items;
+        }
+
+        pushParam(items, '参考强度', workflowParams.reference_strength);
+        pushParam(items, '增强模式', workflowParams.enhanced);
+    }
+
+    return items;
+}
+
 function getDurationSeconds(startedAt, finishedAt) {
     if (!startedAt || !finishedAt) {
         return null;
@@ -403,6 +468,7 @@ function toImagePair(task) {
     const firstInput = Array.isArray(workflowParams.imageList) ? workflowParams.imageList[0] : null;
     const originalSize = firstInput?.o_size || workflowParams.o_size || {};
     const durationSeconds = getDurationSeconds(task.started_at, task.finished_at);
+    const actionSecond = getActionSecond(task, workflowParams);
 
     return {
         id: task.id,
@@ -411,7 +477,8 @@ function toImagePair(task) {
         subtaskId: task.sub_task_id || '',
         taskId: task.task_id || '',
         operationType: operationType,
-        actionSecond: task.action_second || '',
+        actionSecond: actionSecond,
+        keyParams: getKeyParams(task, workflowParams),
         userId: task.user_id || '',
         username: task.username || '',
         nickname: task.nickname || '',

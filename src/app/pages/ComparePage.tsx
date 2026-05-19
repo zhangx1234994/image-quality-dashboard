@@ -597,8 +597,16 @@ export function ComparePage() {
               <InfoRow label="输出策略" value={pair.outputResolution || "—"} />
               <InfoRow label="工具类型" value={pair.toolType || "—"} />
               <InfoRow label="任务数量" value={pair.requestedCount !== null ? String(pair.requestedCount) : String(pair.subTaskCount)} />
-              <InfoRow label="增强模式" value={pair.enhanced === null ? "—" : pair.enhanced ? "开启" : "关闭"} />
-              <InfoRow label="创意强度" value={getCreativeStrengthDisplay(pair) !== null ? String(getCreativeStrengthDisplay(pair)) : "—"} />
+              {(pair.keyParams || []).length > 0 ? (
+                (pair.keyParams || []).map((item) => (
+                  <InfoRow key={`${item.label}-${item.value}`} label={item.label} value={item.value} />
+                ))
+              ) : (
+                <>
+                  <InfoRow label="增强模式" value={pair.enhanced === null ? "—" : pair.enhanced ? "开启" : "关闭"} />
+                  <InfoRow label="创意强度" value={getCreativeStrengthDisplay(pair) !== null ? String(getCreativeStrengthDisplay(pair)) : "—"} />
+                </>
+              )}
               <InfoRow label="辅助参考图" value={pair.auxImageCount ? `${pair.auxImageCount} 张` : "无"} />
               <InfoRow label="包含遮罩" value={pair.hasMask ? "是" : "否"} />
             </div>
