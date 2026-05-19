@@ -7,6 +7,7 @@ export interface ImagePair {
   subtaskId: string;
   taskId: string;
   operationType: string;
+  actionSecond: string;
   userId: string;
   username: string;
   nickname: string;

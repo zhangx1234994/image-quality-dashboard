@@ -25,6 +25,7 @@ interface FilterState {
   search: string;
   userId: string;
   operationType: string;
+  actionSecond: string;
   status: string;
   dateStart: string;
   dateEnd: string;
@@ -39,6 +40,7 @@ const DEFAULT_FILTERS: FilterState = {
   search: "",
   userId: "",
   operationType: "全部",
+  actionSecond: "全部",
   status: "成功",
   dateStart: "",
   dateEnd: "",
@@ -47,6 +49,13 @@ const DEFAULT_FILTERS: FilterState = {
 const DATABASE_OPTIONS: Array<{ key: DatabaseKey; label: string }> = [
   { key: "prod", label: "正式库" },
   { key: "test", label: "测试库" },
+];
+
+const FISSION_MODE_OPTIONS = [
+  { value: "全部", label: "全部裂变" },
+  { value: "ComfyUIVL0514", label: "ComfyUI 版本" },
+  { value: "GPTImage2VL", label: "商业模型" },
+  { value: "CozeTextEnhance", label: "文生图裂变" },
 ];
 
 const STATUS_STYLE: Record<TaskStatus, { bg: string; color: string; dot: string }> = {
@@ -298,6 +307,7 @@ export function ListPage() {
     if (filters.search.trim()) params.set("search", filters.search.trim());
     if (filters.userId.trim()) params.set("user_id", filters.userId.trim());
     if (filters.operationType !== "全部") params.set("action", filters.operationType);
+    if (filters.operationType === "fission" && filters.actionSecond !== "全部") params.set("action_second", filters.actionSecond);
     if (filters.status !== "全部") params.set("status", filters.status);
     if (filters.dateStart) params.set("start_date", filters.dateStart);
     if (filters.dateEnd) params.set("end_date", filters.dateEnd);
@@ -330,7 +340,12 @@ export function ListPage() {
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setPage(1);
-    setFilters((current) => ({ ...current, [key]: value }));
+    setFilters((current) => {
+      if (key === "operationType" && value !== "fission") {
+        return { ...current, [key]: value, actionSecond: "全部" };
+      }
+      return { ...current, [key]: value };
+    });
   };
 
   const resetFilters = () => {
@@ -343,6 +358,7 @@ export function ListPage() {
     if (filters.search) count++;
     if (filters.userId) count++;
     if (filters.operationType !== "全部") count++;
+    if (filters.operationType === "fission" && filters.actionSecond !== "全部") count++;
     if (filters.status !== "全部") count++;
     if (filters.dateStart) count++;
     if (filters.dateEnd) count++;
@@ -416,6 +432,8 @@ export function ListPage() {
     filters.operationType === "全部"
       ? "全部"
       : (actionLabelMap.get(filters.operationType) || filters.operationType);
+  const selectedFissionModeLabel =
+    FISSION_MODE_OPTIONS.find((option) => option.value === filters.actionSecond)?.label || filters.actionSecond;
 
   const sortLabelMap: Record<SortKey, string> = {
     date: "日期",
@@ -572,6 +590,17 @@ export function ListPage() {
                 </select>
               </div>
 
+              {filters.operationType === "fission" && (
+                <div>
+                  <label style={labelStyle}>裂变模式</label>
+                  <select value={filters.actionSecond} onChange={(e) => updateFilter("actionSecond", e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                    {FISSION_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="h-px" style={{ background: "#1a2332" }} />
 
               <div>
@@ -688,6 +717,12 @@ export function ListPage() {
               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs" style={{ background: "rgba(99,102,241,0.1)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.2)" }}>
                 {selectedActionLabel}
                 <button onClick={() => updateFilter("operationType", "全部")}><X size={9} /></button>
+              </span>
+            )}
+            {filters.operationType === "fission" && filters.actionSecond !== "全部" && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs" style={{ background: "rgba(99,102,241,0.1)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.2)" }}>
+                {selectedFissionModeLabel}
+                <button onClick={() => updateFilter("actionSecond", "全部")}><X size={9} /></button>
               </span>
             )}
             {filters.status !== "全部" && (

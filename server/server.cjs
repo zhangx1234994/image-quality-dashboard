@@ -43,12 +43,47 @@ const pools = Object.fromEntries(
     ])
 );
 
+const schemaCapabilities = Object.fromEntries(
+    Object.keys(databaseOptions).map((key) => [key, { loadedAt: 0, hasActionSecond: false }])
+);
+const SCHEMA_CACHE_TTL_MS = 60 * 1000;
+
 function getDatabaseKey(value) {
     return value === 'test' ? 'test' : 'prod';
 }
 
-function getPool(req) {
-    return pools[getDatabaseKey(req.query.db)];
+async function getSchemaCapabilities(dbKey) {
+    const cached = schemaCapabilities[dbKey];
+    const now = Date.now();
+    if (cached && now - cached.loadedAt < SCHEMA_CACHE_TTL_MS) {
+        return cached;
+    }
+
+    const option = databaseOptions[dbKey];
+    const pool = pools[dbKey];
+    const [columns] = await pool.query(
+        `SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'workflow_task' AND COLUMN_NAME = 'action_second'
+        LIMIT 1`,
+        [option.database]
+    );
+
+    schemaCapabilities[dbKey] = {
+        loadedAt: now,
+        hasActionSecond: columns.length > 0
+    };
+
+    return schemaCapabilities[dbKey];
+}
+
+async function getDbContext(req) {
+    const dbKey = getDatabaseKey(req.query.db);
+    return {
+        dbKey,
+        pool: pools[dbKey],
+        capabilities: await getSchemaCapabilities(dbKey)
+    };
 }
 
 // 测试数据库连接
@@ -95,8 +130,8 @@ function normalizeAction(action) {
     return actionLabelToValue[action] || action;
 }
 
-function appendCommonFilters(sql, params, filters = {}) {
-    const { user_id, action, status, start_date, end_date, search } = filters;
+function appendCommonFilters(sql, params, filters = {}, capabilities = {}) {
+    const { user_id, action, action_second, status, start_date, end_date, search } = filters;
 
     if (user_id) {
         sql += ` AND (
@@ -111,6 +146,11 @@ function appendCommonFilters(sql, params, filters = {}) {
     if (normalizedAction) {
         sql += ' AND wt.action = ?';
         params.push(normalizedAction);
+    }
+
+    if (normalizedAction === 'fission' && action_second && capabilities.hasActionSecond) {
+        sql += ' AND wt.action_second = ?';
+        params.push(action_second);
     }
 
     const normalizedStatus = normalizeStatus(status);
@@ -148,7 +188,7 @@ function appendCommonFilters(sql, params, filters = {}) {
 // API: 获取统计数据
 app.get('/api/stats', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool } = await getDbContext(req);
         // 只使用数据库查询
         const [totalResult] = await pool.query(
             'SELECT COUNT(*) as total FROM workflow_task WHERE sub_task_id IS NOT NULL AND sub_task_id != ""'
@@ -188,7 +228,7 @@ app.get('/api/stats', async (req, res) => {
 // API: 获取所有操作类型
 app.get('/api/actions', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool } = await getDbContext(req);
         // 只使用数据库查询
         const [results] = await pool.query(
             'SELECT DISTINCT action FROM workflow_task WHERE action IS NOT NULL AND sub_task_id IS NOT NULL AND sub_task_id != "" ORDER BY action'
@@ -216,7 +256,7 @@ app.get('/api/actions', async (req, res) => {
 // API: 获取任务列表(支持筛选) - 只查询子任务(图片生成质量对比)
 app.get('/api/tasks', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool, capabilities } = await getDbContext(req);
         const { limit = 10, offset = 0 } = req.query;
         
         // 只使用数据库查询，支持分页加载，保留筛选功能
@@ -226,7 +266,7 @@ app.get('/api/tasks', async (req, res) => {
             WHERE wt.sub_task_id IS NOT NULL AND wt.sub_task_id != ''`;
         const params = [];
 
-        sql = appendCommonFilters(sql, params, req.query);
+        sql = appendCommonFilters(sql, params, req.query, capabilities);
 
         // 先获取总数
         const countSql = sql.replace('SELECT wt.*, u.username AS username, u.nickname AS nickname', 'SELECT COUNT(DISTINCT wt.id) as total');
@@ -371,6 +411,7 @@ function toImagePair(task) {
         subtaskId: task.sub_task_id || '',
         taskId: task.task_id || '',
         operationType: operationType,
+        actionSecond: task.action_second || '',
         userId: task.user_id || '',
         username: task.username || '',
         nickname: task.nickname || '',
@@ -409,7 +450,7 @@ function toImagePair(task) {
 // API: 获取单个任务详情
 app.get('/api/tasks/:id', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool } = await getDbContext(req);
         const { id } = req.params;
         
         // 只使用数据库查询
@@ -447,7 +488,7 @@ app.get('/api/tasks/:id', async (req, res) => {
 // API: 获取图片对比数据（适配前端 ImagePair 接口）
 app.get('/api/image-pairs', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool, capabilities } = await getDbContext(req);
         const { limit = 50, offset = 0, status } = req.query;
         const normalizedStatus = normalizeStatus(status);
         
@@ -463,7 +504,7 @@ app.get('/api/image-pairs', async (req, res) => {
             sql += ' AND JSON_LENGTH(wt.images) > 0';
         }
 
-        sql = appendCommonFilters(sql, params, req.query);
+        sql = appendCommonFilters(sql, params, req.query, capabilities);
 
         // 排序和分页
         sql += ' ORDER BY wt.id DESC LIMIT ? OFFSET ?';
@@ -483,7 +524,7 @@ app.get('/api/image-pairs', async (req, res) => {
             countSql += ' AND JSON_LENGTH(wt.images) > 0';
         }
 
-        countSql = appendCommonFilters(countSql, countParams, req.query);
+        countSql = appendCommonFilters(countSql, countParams, req.query, capabilities);
 
         const [countResult] = await pool.query(countSql, countParams);
         const totalCount = countResult[0].count;
@@ -508,7 +549,7 @@ app.get('/api/image-pairs', async (req, res) => {
 
 app.get('/api/image-pairs/:id', async (req, res) => {
     try {
-        const pool = getPool(req);
+        const { pool } = await getDbContext(req);
         const [results] = await pool.query(
             `SELECT wt.*, u.username AS username, u.nickname AS nickname
             FROM workflow_task wt
@@ -542,15 +583,17 @@ app.get('/api/image-pairs/:id', async (req, res) => {
 // 健康检查
 app.get('/api/health', async (req, res) => {
     try {
-        const pool = getPool(req);
-        const dbKey = getDatabaseKey(req.query.db);
+        const { dbKey, pool, capabilities } = await getDbContext(req);
         // 只检查数据库连接
         await pool.query('SELECT 1');
         res.json({
             success: true,
             message: '服务运行正常',
             database: databaseOptions[dbKey].database,
-            databaseLabel: databaseOptions[dbKey].label
+            databaseLabel: databaseOptions[dbKey].label,
+            capabilities: {
+                actionSecond: capabilities.hasActionSecond
+            }
         });
     } catch (error) {
         res.status(500).json({
