@@ -14,7 +14,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { formatDuration, formatSize, getErrorSummary, getListThumbnail, getSmallThumbnail, type ImagePair, type TaskStatus } from "../data/imagePairs";
+import { formatDuration, formatSize, getErrorSummary, getListThumbnail, getSmallThumbnail, type ImagePair, type QualityAnnotation, type QualityRating, type TaskStatus } from "../data/imagePairs";
 
 type SortKey = "date" | "duration" | "status" | "action" | "model" | "name";
 type SortDir = "asc" | "desc";
@@ -63,6 +63,38 @@ const STATUS_STYLE: Record<TaskStatus, { bg: string; color: string; dot: string 
   失败: { bg: "rgba(239,68,68,0.12)", color: "#f87171", dot: "#ef4444" },
   处理中: { bg: "rgba(59,130,246,0.12)", color: "#60a5fa", dot: "#3b82f6" },
 };
+
+const QUALITY_STYLE: Record<QualityRating, { bg: string; color: string; border: string }> = {
+  优秀: { bg: "rgba(34,197,94,0.14)", color: "#4ade80", border: "rgba(34,197,94,0.28)" },
+  良好: { bg: "rgba(59,130,246,0.14)", color: "#60a5fa", border: "rgba(59,130,246,0.28)" },
+  一般: { bg: "rgba(245,158,11,0.14)", color: "#fbbf24", border: "rgba(245,158,11,0.28)" },
+  问题: { bg: "rgba(239,68,68,0.14)", color: "#f87171", border: "rgba(239,68,68,0.28)" },
+};
+
+function QualityBadge({ rating }: { rating: QualityRating | null | undefined }) {
+  if (!rating) return null;
+  const style = QUALITY_STYLE[rating];
+  return (
+    <span className="px-1.5 py-0.5 rounded-full" style={{ background: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 10, fontWeight: 600 }}>
+      {rating}
+    </span>
+  );
+}
+
+function hasAnnotation(annotation: QualityAnnotation | null | undefined) {
+  return Boolean(annotation?.rating || annotation?.issues?.length || annotation?.note?.trim());
+}
+
+function AnnotationBadge({ annotation }: { annotation: QualityAnnotation | null | undefined }) {
+  if (!hasAnnotation(annotation)) return null;
+  if (annotation?.rating) return <QualityBadge rating={annotation.rating} />;
+
+  return (
+    <span className="px-1.5 py-0.5 rounded-full" style={{ background: "rgba(99,102,241,0.14)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.28)", fontSize: 10, fontWeight: 600 }}>
+      已标
+    </span>
+  );
+}
 
 function getUserDisplay(pair: ImagePair) {
   return pair.nickname || pair.username || pair.userId || "未知用户";
@@ -173,6 +205,9 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusStyle.dot }} />
           <span style={{ fontSize: 10, fontWeight: 600 }}>{pair.status}</span>
         </div>
+        <div className="absolute bottom-2 right-2">
+          <AnnotationBadge annotation={pair.qualityAnnotation} />
+        </div>
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center" style={{ background: "rgba(8,13,22,0.38)" }}>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "rgba(99,102,241,0.92)", color: "#fff" }}>
             <Columns2 size={13} />
@@ -185,7 +220,10 @@ function GridCard({ pair, onClick }: { pair: ImagePair; onClick: () => void }) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p style={{ fontSize: 12, color: "#94a3b8" }}>{pair.subtaskNo}</p>
-            <p style={{ fontSize: 13, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pair.operationType}</p>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p style={{ fontSize: 13, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pair.operationType}</p>
+              <AnnotationBadge annotation={pair.qualityAnnotation} />
+            </div>
           </div>
           <span className="px-1.5 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8", fontSize: 10 }}>
             {pair.model || "未知模型"}
@@ -246,7 +284,10 @@ function TableRow({ pair, onClick, index }: { pair: ImagePair; onClick: () => vo
         <p style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>{pair.taskId}</p>
       </td>
       <td className="px-3 py-3">
-        <span style={{ fontSize: 12, color: "#cbd5e1" }}>{pair.operationType}</span>
+        <div className="flex items-center gap-1.5">
+          <span style={{ fontSize: 12, color: "#cbd5e1" }}>{pair.operationType}</span>
+          <AnnotationBadge annotation={pair.qualityAnnotation} />
+        </div>
       </td>
       <td className="px-3 py-3">
         <span style={{ fontSize: 11, color: "#94a3b8" }}>{pair.model || "未知"}</span>

@@ -1,4 +1,13 @@
 export type TaskStatus = "成功" | "失败" | "处理中";
+export type QualityRating = "优秀" | "良好" | "一般" | "问题";
+
+export interface QualityAnnotation {
+  rating: QualityRating | null;
+  issues: string[];
+  note: string;
+  submitted: boolean;
+  updatedAt: string;
+}
 
 export interface ImagePair {
   id: number;
@@ -9,6 +18,7 @@ export interface ImagePair {
   operationType: string;
   actionSecond: string;
   keyParams: Array<{ label: string; value: string }>;
+  qualityAnnotation: QualityAnnotation;
   userId: string;
   username: string;
   nickname: string;

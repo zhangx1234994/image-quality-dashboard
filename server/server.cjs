@@ -2,9 +2,12 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs/promises');
 
 const app = express();
 const PORT = 3000;
+const ANNOTATION_FILE = path.join(__dirname, 'data', 'quality-annotations.json');
+const QUALITY_RATINGS = new Set(['优秀', '良好', '一般', '问题']);
 
 // 中间件
 app.use(cors());
@@ -84,6 +87,59 @@ async function getDbContext(req) {
         pool: pools[dbKey],
         capabilities: await getSchemaCapabilities(dbKey)
     };
+}
+
+function getAnnotationKey(dbKey, taskId) {
+    return `${dbKey}:${taskId}`;
+}
+
+function emptyAnnotation() {
+    return {
+        rating: null,
+        issues: [],
+        note: '',
+        submitted: false,
+        updatedAt: ''
+    };
+}
+
+async function readAnnotations() {
+    try {
+        const content = await fs.readFile(ANNOTATION_FILE, 'utf8');
+        return JSON.parse(content);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return {};
+        }
+        throw error;
+    }
+}
+
+async function writeAnnotations(annotations) {
+    await fs.mkdir(path.dirname(ANNOTATION_FILE), { recursive: true });
+    const tempFile = `${ANNOTATION_FILE}.tmp`;
+    await fs.writeFile(tempFile, JSON.stringify(annotations, null, 2), 'utf8');
+    await fs.rename(tempFile, ANNOTATION_FILE);
+}
+
+function normalizeAnnotation(input = {}) {
+    const rating = QUALITY_RATINGS.has(input.rating) ? input.rating : null;
+    const issues = Array.isArray(input.issues)
+        ? input.issues.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
+        : [];
+    const note = typeof input.note === 'string' ? input.note.slice(0, 2000) : '';
+
+    return {
+        rating,
+        issues,
+        note,
+        submitted: Boolean(rating),
+        updatedAt: new Date().toISOString()
+    };
+}
+
+function getAnnotation(annotations, dbKey, taskId) {
+    return annotations[getAnnotationKey(dbKey, taskId)] || emptyAnnotation();
 }
 
 // 测试数据库连接
@@ -452,7 +508,7 @@ function getDurationSeconds(startedAt, finishedAt) {
     return Math.round(diffMs / 1000);
 }
 
-function toImagePair(task) {
+function toImagePair(task, qualityAnnotation = emptyAnnotation()) {
     const processedTask = processTaskImages(task);
     const workflowParams = parseWorkflowParams(task);
 
@@ -479,6 +535,7 @@ function toImagePair(task) {
         operationType: operationType,
         actionSecond: actionSecond,
         keyParams: getKeyParams(task, workflowParams),
+        qualityAnnotation,
         userId: task.user_id || '',
         username: task.username || '',
         nickname: task.nickname || '',
@@ -555,8 +612,8 @@ app.get('/api/tasks/:id', async (req, res) => {
 // API: 获取图片对比数据（适配前端 ImagePair 接口）
 app.get('/api/image-pairs', async (req, res) => {
     try {
-        const { pool, capabilities } = await getDbContext(req);
-        const { limit = 50, offset = 0, status } = req.query;
+        const { dbKey, pool, capabilities } = await getDbContext(req);
+        const { limit = 50, offset = 0, status, cursor_id, min_id } = req.query;
         const normalizedStatus = normalizeStatus(status);
         
         // 基础查询条件
@@ -572,6 +629,16 @@ app.get('/api/image-pairs', async (req, res) => {
         }
 
         sql = appendCommonFilters(sql, params, req.query, capabilities);
+
+        if (cursor_id) {
+            sql += ' AND wt.id <= ?';
+            params.push(parseInt(cursor_id));
+        }
+
+        if (min_id) {
+            sql += ' AND wt.id > ?';
+            params.push(parseInt(min_id));
+        }
 
         // 排序和分页
         sql += ' ORDER BY wt.id DESC LIMIT ? OFFSET ?';
@@ -597,7 +664,8 @@ app.get('/api/image-pairs', async (req, res) => {
         const totalCount = countResult[0].count;
         
         // 处理每个任务，转换为前端 ImagePair 接口格式
-        const imagePairs = tasks.map(toImagePair);
+        const annotations = await readAnnotations();
+        const imagePairs = tasks.map((task) => toImagePair(task, getAnnotation(annotations, dbKey, task.id)));
         
         res.json({
             success: true,
@@ -616,7 +684,7 @@ app.get('/api/image-pairs', async (req, res) => {
 
 app.get('/api/image-pairs/:id', async (req, res) => {
     try {
-        const { pool } = await getDbContext(req);
+        const { dbKey, pool } = await getDbContext(req);
         const [results] = await pool.query(
             `SELECT wt.*, u.username AS username, u.nickname AS nickname
             FROM workflow_task wt
@@ -635,13 +703,74 @@ app.get('/api/image-pairs/:id', async (req, res) => {
 
         res.json({
             success: true,
-            data: toImagePair(results[0])
+            data: toImagePair(results[0], getAnnotation(await readAnnotations(), dbKey, results[0].id))
         });
     } catch (error) {
         console.error('获取图片对详情失败:', error);
         res.status(500).json({
             success: false,
             message: '获取图片对详情失败',
+            error: error.message
+        });
+    }
+});
+
+app.get('/api/annotations/:id', async (req, res) => {
+    try {
+        const dbKey = getDatabaseKey(req.query.db);
+        const annotations = await readAnnotations();
+        res.json({
+            success: true,
+            data: getAnnotation(annotations, dbKey, req.params.id)
+        });
+    } catch (error) {
+        console.error('获取质量标注失败:', error);
+        res.status(500).json({
+            success: false,
+            message: '获取质量标注失败',
+            error: error.message
+        });
+    }
+});
+
+app.put('/api/annotations/:id', async (req, res) => {
+    try {
+        const dbKey = getDatabaseKey(req.query.db);
+        const annotations = await readAnnotations();
+        const annotation = normalizeAnnotation(req.body);
+        annotations[getAnnotationKey(dbKey, req.params.id)] = annotation;
+        await writeAnnotations(annotations);
+
+        res.json({
+            success: true,
+            data: annotation
+        });
+    } catch (error) {
+        console.error('保存质量标注失败:', error);
+        res.status(500).json({
+            success: false,
+            message: '保存质量标注失败',
+            error: error.message
+        });
+    }
+});
+
+app.delete('/api/annotations/:id', async (req, res) => {
+    try {
+        const dbKey = getDatabaseKey(req.query.db);
+        const annotations = await readAnnotations();
+        delete annotations[getAnnotationKey(dbKey, req.params.id)];
+        await writeAnnotations(annotations);
+
+        res.json({
+            success: true,
+            data: emptyAnnotation()
+        });
+    } catch (error) {
+        console.error('删除质量标注失败:', error);
+        res.status(500).json({
+            success: false,
+            message: '删除质量标注失败',
             error: error.message
         });
     }

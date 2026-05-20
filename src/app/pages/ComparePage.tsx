@@ -14,7 +14,6 @@ import {
   Maximize2,
   MessageSquare,
   RotateCcw,
-  Send,
   SlidersHorizontal,
   Tag,
   ThumbsUp,
@@ -24,18 +23,12 @@ import {
   ZoomOut,
   Clock,
 } from "lucide-react";
-import { formatDateTime, formatDuration, formatSize, getErrorSummary, getSmallThumbnail, type ImagePair } from "../data/imagePairs";
+import { formatDateTime, formatDuration, formatSize, getErrorSummary, getSmallThumbnail, type ImagePair, type QualityAnnotation, type QualityRating } from "../data/imagePairs";
 
 type ViewMode = "sidebyside" | "slider" | "overlay" | "diff";
-type QualityRating = "优秀" | "良好" | "一般" | "问题";
 type DatabaseKey = "prod" | "test";
 
-interface Annotation {
-  rating: QualityRating | null;
-  issues: string[];
-  note: string;
-  submitted: boolean;
-}
+type Annotation = QualityAnnotation;
 
 const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   画布扩展: { bg: "rgba(59,130,246,0.12)", text: "#60a5fa", border: "rgba(59,130,246,0.25)" },
@@ -59,6 +52,38 @@ const QUALITY_OPTIONS: Array<{ value: QualityRating; label: string; color: strin
   { value: "问题", label: "问题", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.3)", icon: <AlertTriangle size={13} /> },
 ];
 
+const QUALITY_STYLE: Record<QualityRating, { bg: string; color: string; border: string }> = {
+  优秀: { bg: "rgba(34,197,94,0.14)", color: "#4ade80", border: "rgba(34,197,94,0.28)" },
+  良好: { bg: "rgba(59,130,246,0.14)", color: "#60a5fa", border: "rgba(59,130,246,0.28)" },
+  一般: { bg: "rgba(245,158,11,0.14)", color: "#fbbf24", border: "rgba(245,158,11,0.28)" },
+  问题: { bg: "rgba(239,68,68,0.14)", color: "#f87171", border: "rgba(239,68,68,0.28)" },
+};
+
+function QualityBadge({ rating }: { rating: QualityRating | null | undefined }) {
+  if (!rating) return null;
+  const style = QUALITY_STYLE[rating];
+  return (
+    <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: style.bg, color: style.color, border: `1px solid ${style.border}` }}>
+      {rating}
+    </span>
+  );
+}
+
+function hasAnnotation(annotation: QualityAnnotation | null | undefined) {
+  return Boolean(annotation?.rating || annotation?.issues?.length || annotation?.note?.trim());
+}
+
+function AnnotationBadge({ annotation }: { annotation: QualityAnnotation | null | undefined }) {
+  if (!hasAnnotation(annotation)) return null;
+  if (annotation?.rating) return <QualityBadge rating={annotation.rating} />;
+
+  return (
+    <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: "rgba(99,102,241,0.14)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.28)" }}>
+      已标
+    </span>
+  );
+}
+
 const ISSUE_TAGS = [
   "结果与原图不匹配",
   "主体变形",
@@ -80,13 +105,23 @@ function getInitialDatabase(): DatabaseKey {
   return localStorage.getItem("image-dashboard-db") === "test" ? "test" : "prod";
 }
 
-function focusListOnCurrent(detailPair: ImagePair, listPairs: ImagePair[]) {
-  const currentIndex = listPairs.findIndex((pair) => pair.id === detailPair.id);
-  if (currentIndex === -1) {
-    return [detailPair, ...listPairs.filter((pair) => pair.id !== detailPair.id)];
-  }
+function emptyAnnotation(): Annotation {
+  return { rating: null, issues: [], note: "", submitted: false, updatedAt: "" };
+}
 
-  return [detailPair, ...listPairs.slice(currentIndex + 1)];
+function getAnnotationMap(pairs: ImagePair[]) {
+  return pairs.reduce<Record<number, Annotation>>((result, pair) => {
+    result[pair.id] = pair.qualityAnnotation || emptyAnnotation();
+    return result;
+  }, {});
+}
+
+function mergePairs(...groups: ImagePair[][]) {
+  const byId = new Map<number, ImagePair>();
+  groups.flat().forEach((pair) => {
+    byId.set(pair.id, { ...(byId.get(pair.id) || {}), ...pair });
+  });
+  return Array.from(byId.values()).sort((a, b) => b.id - a.id);
 }
 
 function ImageCanvas({ src, alt, zoom, emptyText }: { src: string; alt: string; zoom: number; emptyText: string }) {
@@ -298,7 +333,10 @@ export function ComparePage() {
   const database: DatabaseKey = searchParams.get("db") === "test" ? "test" : getInitialDatabase();
   const [imagePairs, setImagePairs] = useState<ImagePair[]>([]);
   const [currentPair, setCurrentPair] = useState<ImagePair | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingNewer, setLoadingNewer] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<number, Partial<ImagePair>>>({});
   const [annotations, setAnnotations] = useState<Record<number, Annotation>>({});
@@ -308,6 +346,7 @@ export function ComparePage() {
   const [showList, setShowList] = useState(true);
   const originalInputRef = useRef<HTMLInputElement>(null);
   const resultInputRef = useRef<HTMLInputElement>(null);
+  const activeItemRef = useRef<HTMLButtonElement | null>(null);
 
   const allPairs = imagePairs;
   const currentIndex = allPairs.findIndex((pair) => pair.id === Number(id));
@@ -319,16 +358,19 @@ export function ComparePage() {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setTotalCount(0);
     setError(null);
 
     const detailParams = new URLSearchParams({ db: database });
-    const listParams = new URLSearchParams({ db: database, limit: "200" });
+    const newerParams = new URLSearchParams({ db: database, limit: "40", min_id: id || "" });
+    const olderParams = new URLSearchParams({ db: database, limit: "200", cursor_id: id || "" });
 
     Promise.all([
       fetch(`/api/image-pairs/${id}?${detailParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
-      fetch(`/api/image-pairs?${listParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
+      fetch(`/api/image-pairs?${newerParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
+      fetch(`/api/image-pairs?${olderParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
     ])
-      .then(([detailData, listData]) => {
+      .then(([detailData, newerData, olderData]) => {
         if (!detailData.success || !detailData.data) {
           setCurrentPair(null);
           setImagePairs([]);
@@ -338,11 +380,14 @@ export function ComparePage() {
         }
 
         const detailPair = detailData.data as ImagePair;
-        const listPairs = listData.success && Array.isArray(listData.data) ? listData.data : [];
-        const focusedPairs = focusListOnCurrent(detailPair, listPairs);
+        const newerPairs = newerData.success && Array.isArray(newerData.data) ? newerData.data : [];
+        const olderPairs = olderData.success && Array.isArray(olderData.data) ? olderData.data : [];
+        const loadedPairs = mergePairs(newerPairs, [detailPair], olderPairs);
 
         setCurrentPair(detailPair);
-        setImagePairs(focusedPairs);
+        setImagePairs(loadedPairs);
+        setTotalCount(Math.max(Number(newerData.count || 0), Number(olderData.count || 0), loadedPairs.length));
+        setAnnotations(getAnnotationMap(loadedPairs));
         setLoading(false);
       })
       .catch((err) => {
@@ -357,7 +402,11 @@ export function ComparePage() {
     return () => controller.abort();
   }, [database, id]);
 
-  const getAnnotation = (pairId: number): Annotation => annotations[pairId] || { rating: null, issues: [], note: "", submitted: false };
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: "center" });
+  }, [database, id, loading]);
+
+  const getAnnotation = (pairId: number): Annotation => annotations[pairId] || emptyAnnotation();
 
   const updateAnnotation = (pairId: number, patch: Partial<Annotation>) => {
     setAnnotations((current) => ({
@@ -369,21 +418,83 @@ export function ComparePage() {
   const toggleIssue = (pairId: number, tag: string) => {
     const ann = getAnnotation(pairId);
     const issues = ann.issues.includes(tag) ? ann.issues.filter((item) => item !== tag) : [...ann.issues, tag];
-    updateAnnotation(pairId, { issues });
+    saveAnnotationPatch(pairId, { issues });
   };
 
-  const submitAnnotation = (pairId: number) => {
-    setAnnotations((current) => ({
-      ...current,
-      [pairId]: { ...getAnnotation(pairId), submitted: true },
-    }));
+  const updatePairAnnotation = (pairId: number, annotation: Annotation) => {
+    setImagePairs((current) => current.map((item) => item.id === pairId ? { ...item, qualityAnnotation: annotation } : item));
+    setCurrentPair((current) => current && current.id === pairId ? { ...current, qualityAnnotation: annotation } : current);
   };
 
-  const resetAnnotation = (pairId: number) => {
-    setAnnotations((current) => ({
-      ...current,
-      [pairId]: { rating: null, issues: [], note: "", submitted: false },
-    }));
+  const saveAnnotation = async (pairId: number, annotation: Annotation) => {
+    const response = await fetch(`/api/annotations/${pairId}?db=${database}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(annotation),
+    });
+    const data = await response.json();
+    if (!data.success) return;
+
+    setAnnotations((current) => ({ ...current, [pairId]: data.data }));
+    updatePairAnnotation(pairId, data.data);
+  };
+
+  const saveAnnotationPatch = (pairId: number, patch: Partial<Annotation>) => {
+    const annotation = { ...getAnnotation(pairId), ...patch };
+    setAnnotations((current) => ({ ...current, [pairId]: annotation }));
+    void saveAnnotation(pairId, annotation);
+  };
+
+  const resetAnnotation = async (pairId: number) => {
+    const response = await fetch(`/api/annotations/${pairId}?db=${database}`, { method: "DELETE" });
+    const data = await response.json();
+    const annotation = data.success ? data.data : emptyAnnotation();
+    setAnnotations((current) => ({ ...current, [pairId]: annotation }));
+    updatePairAnnotation(pairId, annotation);
+  };
+
+  const loadNewerPairs = async () => {
+    if (loadingNewer || allPairs.length === 0) return;
+    setLoadingNewer(true);
+    try {
+      const newestId = Math.max(...allPairs.map((item) => item.id));
+      const params = new URLSearchParams({ db: database, limit: "50", min_id: String(newestId) });
+      const data = await fetch(`/api/image-pairs?${params.toString()}`).then((res) => res.json());
+      if (!data.success || !Array.isArray(data.data)) return;
+
+      setImagePairs((current) => {
+        const nextPairs = mergePairs(data.data, current);
+        setAnnotations((currentAnnotations) => ({ ...currentAnnotations, ...getAnnotationMap(nextPairs) }));
+        setTotalCount(Math.max(Number(data.count || 0), nextPairs.length));
+        return nextPairs;
+      });
+    } finally {
+      setLoadingNewer(false);
+    }
+  };
+
+  const loadOlderPairs = async () => {
+    if (loadingOlder || allPairs.length >= totalCount) return;
+    setLoadingOlder(true);
+    try {
+      const oldestId = Math.min(...allPairs.map((item) => item.id));
+      const params = new URLSearchParams({ db: database, limit: "50", cursor_id: String(Math.max(0, oldestId - 1)) });
+      const data = await fetch(`/api/image-pairs?${params.toString()}`).then((res) => res.json());
+      if (!data.success || !Array.isArray(data.data)) return;
+
+      setImagePairs((current) => {
+        const nextPairs = mergePairs(current, data.data);
+        setAnnotations((currentAnnotations) => ({ ...currentAnnotations, ...getAnnotationMap(nextPairs) }));
+        setTotalCount(Math.max(Number(data.count || 0), nextPairs.length));
+        return nextPairs;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  const scrollToCurrent = () => {
+    activeItemRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
   const pair: ImagePair | undefined = (() => {
@@ -456,7 +567,7 @@ export function ComparePage() {
             <ChevronLeft size={13} />
           </button>
           <span style={{ fontSize: 11, color: "#475569", minWidth: 36, textAlign: "center" }}>
-            {Math.max(currentIndex + 1, 1)}/{allPairs.length}
+            {currentIndex > 0 ? `前进 ${currentIndex}` : "当前"}
           </span>
           <button onClick={() => goTo(currentIndex + 1)} disabled={currentIndex >= allPairs.length - 1} className="w-7 h-7 flex items-center justify-center rounded transition-all disabled:opacity-20" style={{ background: "#111d2e", color: "#64748b" }}>
             <ChevronRight size={13} />
@@ -473,6 +584,7 @@ export function ComparePage() {
         <div className="flex items-center gap-2 min-w-0">
           <span className="px-2 py-0.5 rounded text-xs truncate" style={{ background: "#111d2e", color: "#94a3b8", border: "1px solid #1a2332", maxWidth: 240 }}>{pair.name}</span>
           <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: tagColor.bg, color: tagColor.text, border: `1px solid ${tagColor.border}` }}>{pair.operationType}</span>
+          <AnnotationBadge annotation={ann} />
           <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs" style={{ background: statusStyle.bg, color: statusStyle.color }}>
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusStyle.dot }} />
             {pair.status}
@@ -521,14 +633,23 @@ export function ComparePage() {
         <div className="flex-none flex flex-col border-r overflow-hidden transition-all duration-300" style={{ width: showList ? 208 : 0, background: "#0d1422", borderColor: "#1a2332" }}>
           <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: "#1a2332" }}>
             <span style={{ fontSize: 11, color: "#64748b", fontWeight: 500, letterSpacing: "0.05em" }}>RECENT TASKS</span>
-            <span className="px-1.5 py-0.5 rounded text-xs" style={{ background: "#111d2e", color: "#475569" }}>{allPairs.length}</span>
+            <button onClick={scrollToCurrent} className="px-1.5 py-0.5 rounded text-xs transition-all" style={{ background: "#111d2e", color: "#64748b", border: "1px solid #1a2332" }}>
+              回到当前
+            </button>
+          </div>
+          <div className="flex items-center justify-between px-3 py-1.5 border-b" style={{ borderColor: "#1a2332" }}>
+            <span style={{ fontSize: 10, color: "#475569" }}>已加载 {allPairs.length}/{totalCount || allPairs.length}</span>
+            <span style={{ fontSize: 10, color: "#475569" }}>当前 {currentIndex >= 0 ? currentIndex + 1 : "-"}</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+            <button onClick={loadNewerPairs} disabled={loadingNewer} className="w-full rounded-md py-1.5 text-xs transition-all disabled:opacity-50" style={{ background: "#101d30", color: "#64748b", border: "1px solid #1a2332" }}>
+              {loadingNewer ? "加载中..." : "加载更新"}
+            </button>
             {allPairs.map((item) => {
               const active = item.id === pair.id;
               const itemStatus = STATUS_STYLE[item.status];
               return (
-                <button key={item.id} onClick={() => navigate(`/compare/${item.id}?db=${database}`)} className="w-full rounded-lg overflow-hidden transition-all text-left" style={{ background: active ? "#101d30" : "#111b2a", border: `1px solid ${active ? "#3b82f6" : "#1a2332"}` }}>
+                <button ref={active ? activeItemRef : null} key={item.id} onClick={() => navigate(`/compare/${item.id}?db=${database}`)} className="w-full rounded-lg overflow-hidden transition-all text-left" style={{ background: active ? "#101d30" : "#111b2a", border: `1px solid ${active ? "#3b82f6" : "#1a2332"}` }}>
                   <div className="relative w-full" style={{ height: 64 }}>
                     <div className="absolute inset-y-0 left-0 w-1/2" style={{ background: "#0a0f1a" }}>
                       {item.original ? <img src={getSmallThumbnail(item.original)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" /> : null}
@@ -538,6 +659,9 @@ export function ComparePage() {
                     </div>
                     <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: "rgba(255,255,255,0.4)" }} />
                     <span className="absolute top-1 left-1 px-1 py-0.5 rounded text-xs" style={{ background: itemStatus.bg, color: itemStatus.color, fontSize: 9 }}>{item.status}</span>
+                    <span className="absolute top-1 right-1">
+                      <AnnotationBadge annotation={item.qualityAnnotation} />
+                    </span>
                   </div>
                   <div className="px-2 py-1.5 space-y-1">
                     <p style={{ fontSize: 10, color: active ? "#93c5fd" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.subtaskNo}</p>
@@ -550,6 +674,9 @@ export function ComparePage() {
                 </button>
               );
             })}
+            <button onClick={loadOlderPairs} disabled={loadingOlder || allPairs.length >= totalCount} className="w-full rounded-md py-1.5 text-xs transition-all disabled:opacity-50" style={{ background: "#101d30", color: "#64748b", border: "1px solid #1a2332" }}>
+              {loadingOlder ? "加载中..." : allPairs.length >= totalCount ? "已全部加载" : "加载更多"}
+            </button>
           </div>
         </div>
 
@@ -579,10 +706,77 @@ export function ComparePage() {
                 <CheckCircle2 size={16} style={{ color: "#22c55e", flexShrink: 0 }} />
                 <div>
                   <p style={{ fontSize: 12, color: "#4ade80", fontWeight: 600 }}>标注已提交</p>
-                  <p style={{ fontSize: 11, color: "#64748b" }}>当前仅保存在本地页面状态</p>
+                  <p style={{ fontSize: 11, color: "#64748b" }}>已保存到本地标注文件</p>
                 </div>
               </div>
             )}
+
+            <div className="rounded-xl p-3 space-y-3" style={{ background: "#111d2e", border: "1px solid #1a2332" }}>
+              <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.04em" }}>
+                人工质量判断 <span style={{ color: "#ef4444" }}>*</span>
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {QUALITY_OPTIONS.map((option) => {
+                  const active = ann.rating === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => saveAnnotationPatch(pair.id, { rating: option.value })}
+                      className="flex items-center gap-2 px-3 py-2.5 rounded-xl transition-all"
+                      style={{ background: active ? option.bg : "rgba(255,255,255,0.03)", border: `1px solid ${active ? option.border : "#1a2332"}`, color: active ? option.color : "#475569" }}
+                    >
+                      <span style={{ color: active ? option.color : "#334155" }}>{option.icon}</span>
+                      <span style={{ fontSize: 12, fontWeight: active ? 600 : 400 }}>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div>
+                <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, marginBottom: 8, letterSpacing: "0.04em" }}>
+                  问题标签
+                  {ann.issues.length > 0 && <span className="ml-2 px-1.5 py-0.5 rounded-full" style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8", fontSize: 10 }}>{ann.issues.length}</span>}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {ISSUE_TAGS.map((tag) => {
+                    const active = ann.issues.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => toggleIssue(pair.id, tag)}
+                        className="px-2.5 py-1 rounded-full text-xs transition-all"
+                        style={{ background: active ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.04)", color: active ? "#f87171" : "#64748b", border: `1px solid ${active ? "rgba(239,68,68,0.35)" : "#1a2332"}` }}
+                      >
+                        {active && "x "}{tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <MessageSquare size={12} style={{ color: "#475569" }} />
+                  <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.04em" }}>备注说明</p>
+                </div>
+                <textarea
+                  value={ann.note}
+                  onChange={(event) => updateAnnotation(pair.id, { note: event.target.value })}
+                  onBlur={(event) => saveAnnotationPatch(pair.id, { note: event.currentTarget.value })}
+                  placeholder="记录原图与结果图是否匹配，质量问题具体出现在哪里。"
+                  rows={3}
+                  className="w-full rounded-xl resize-none outline-none transition-all"
+                  style={{ background: "#0d1422", border: "1px solid #1a2332", color: "#cbd5e1", fontSize: 12, padding: "10px 12px", lineHeight: 1.6 }}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button onClick={() => resetAnnotation(pair.id)} className="flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs transition-all" style={{ background: "#0d1422", color: "#64748b", border: "1px solid #1a2332", flexShrink: 0 }}>
+                  <RotateCcw size={12} /> 重置
+                </button>
+                <span style={{ fontSize: 11, color: "#64748b" }}>评级和标签点击后自动保存，备注离开输入框后保存</span>
+              </div>
+            </div>
 
             <div className="rounded-xl p-3 space-y-2" style={{ background: "#111d2e", border: "1px solid #1a2332" }}>
               <p style={{ fontSize: 11, color: "#475569", fontWeight: 500, marginBottom: 6 }}>任务概览</p>
@@ -647,81 +841,6 @@ export function ComparePage() {
               </div>
             )}
 
-            <div className="h-px" style={{ background: "#1a2332" }} />
-
-            <div>
-              <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, marginBottom: 10, letterSpacing: "0.04em" }}>
-                人工质量判断 <span style={{ color: "#ef4444" }}>*</span>
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {QUALITY_OPTIONS.map((option) => {
-                  const active = ann.rating === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => updateAnnotation(pair.id, { rating: option.value })}
-                      className="flex items-center gap-2 px-3 py-2.5 rounded-xl transition-all"
-                      style={{ background: active ? option.bg : "rgba(255,255,255,0.03)", border: `1px solid ${active ? option.border : "#1a2332"}`, color: active ? option.color : "#475569" }}
-                    >
-                      <span style={{ color: active ? option.color : "#334155" }}>{option.icon}</span>
-                      <span style={{ fontSize: 12, fontWeight: active ? 600 : 400 }}>{option.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, marginBottom: 10, letterSpacing: "0.04em" }}>
-                问题标签
-                {ann.issues.length > 0 && <span className="ml-2 px-1.5 py-0.5 rounded-full" style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8", fontSize: 10 }}>{ann.issues.length}</span>}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {ISSUE_TAGS.map((tag) => {
-                  const active = ann.issues.includes(tag);
-                  return (
-                    <button
-                      key={tag}
-                      onClick={() => toggleIssue(pair.id, tag)}
-                      className="px-2.5 py-1 rounded-full text-xs transition-all"
-                      style={{ background: active ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.04)", color: active ? "#f87171" : "#64748b", border: `1px solid ${active ? "rgba(239,68,68,0.35)" : "#1a2332"}` }}
-                    >
-                      {active && "✕ "}{tag}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <MessageSquare size={12} style={{ color: "#475569" }} />
-                <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.04em" }}>备注说明</p>
-              </div>
-              <textarea
-                value={ann.note}
-                onChange={(event) => updateAnnotation(pair.id, { note: event.target.value })}
-                placeholder="记录原图与结果图是否匹配，质量问题具体出现在哪里。"
-                rows={4}
-                className="w-full rounded-xl resize-none outline-none transition-all"
-                style={{ background: "#111d2e", border: "1px solid #1a2332", color: "#cbd5e1", fontSize: 12, padding: "10px 12px", lineHeight: 1.6 }}
-              />
-            </div>
-
-            <div className="flex gap-2 pb-2">
-              <button onClick={() => resetAnnotation(pair.id)} className="flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs transition-all" style={{ background: "#111d2e", color: "#64748b", border: "1px solid #1a2332", flexShrink: 0 }}>
-                <RotateCcw size={12} /> 重置
-              </button>
-              <button
-                onClick={() => ann.rating && submitAnnotation(pair.id)}
-                disabled={!ann.rating}
-                className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-medium transition-all"
-                style={{ background: ann.rating ? "linear-gradient(135deg,#6366f1,#a855f7)" : "#111d2e", color: ann.rating ? "#fff" : "#334155", cursor: ann.rating ? "pointer" : "not-allowed", opacity: ann.rating ? 1 : 0.5 }}
-              >
-                <Send size={13} />
-                {ann.submitted ? "重新提交" : "提交标注"}
-              </button>
-            </div>
           </div>
         </div>
       </div>

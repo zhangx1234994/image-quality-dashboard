@@ -14,6 +14,8 @@ pids
 *.pid
 *.seed
 *.pid.lock
+server/data/quality-annotations.json
+server/data/*.tmp
 
 # Package manager files
 yarn.lock
