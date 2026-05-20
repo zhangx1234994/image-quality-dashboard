@@ -80,6 +80,15 @@ function getInitialDatabase(): DatabaseKey {
   return localStorage.getItem("image-dashboard-db") === "test" ? "test" : "prod";
 }
 
+function focusListOnCurrent(detailPair: ImagePair, listPairs: ImagePair[]) {
+  const currentIndex = listPairs.findIndex((pair) => pair.id === detailPair.id);
+  if (currentIndex === -1) {
+    return [detailPair, ...listPairs.filter((pair) => pair.id !== detailPair.id)];
+  }
+
+  return [detailPair, ...listPairs.slice(currentIndex + 1)];
+}
+
 function ImageCanvas({ src, alt, zoom, emptyText }: { src: string; alt: string; zoom: number; emptyText: string }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
@@ -330,10 +339,10 @@ export function ComparePage() {
 
         const detailPair = detailData.data as ImagePair;
         const listPairs = listData.success && Array.isArray(listData.data) ? listData.data : [];
-        const mergedPairs = listPairs.some((pair: ImagePair) => pair.id === detailPair.id) ? listPairs : [detailPair, ...listPairs];
+        const focusedPairs = focusListOnCurrent(detailPair, listPairs);
 
         setCurrentPair(detailPair);
-        setImagePairs(mergedPairs);
+        setImagePairs(focusedPairs);
         setLoading(false);
       })
       .catch((err) => {
