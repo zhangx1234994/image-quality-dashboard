@@ -71,11 +71,11 @@ export function getThumbnailUrl(url: string, width = 200, height?: number): stri
 }
 
 export function getListThumbnail(url: string): string {
-  return getThumbnailUrl(url, 300);
+  return getThumbnailUrl(url, 180);
 }
 
 export function getSmallThumbnail(url: string): string {
-  return getThumbnailUrl(url, 150);
+  return getThumbnailUrl(url, 96);
 }
 
 export function formatDuration(seconds: number | null): string {

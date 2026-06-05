@@ -151,6 +151,7 @@ function ThumbHalf({ src, alt, side }: { src: string; alt: string; side: "left" 
           alt={alt}
           className="absolute inset-0 w-full h-full object-contain"
           loading="lazy"
+          decoding="async"
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center px-3 text-center" style={{ color: "#475569", fontSize: 11 }}>
@@ -168,6 +169,7 @@ function MiniThumb({ src, side }: { src: string; side: "left" | "right" }) {
       alt=""
       className={`absolute inset-y-0 ${side === "left" ? "left-0" : "left-1/2"} w-1/2 h-full object-cover`}
       loading="lazy"
+      decoding="async"
     />
   ) : (
     <div

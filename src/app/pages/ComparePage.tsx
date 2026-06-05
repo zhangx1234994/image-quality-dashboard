@@ -105,6 +105,11 @@ function getInitialDatabase(): DatabaseKey {
   return localStorage.getItem("image-dashboard-db") === "test" ? "test" : "prod";
 }
 
+function getDatabaseFromSearch(value: string | null): DatabaseKey | null {
+  if (value === "prod" || value === "test") return value;
+  return null;
+}
+
 function emptyAnnotation(): Annotation {
   return { rating: null, issues: [], note: "", submitted: false, updatedAt: "" };
 }
@@ -330,7 +335,7 @@ export function ComparePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const database: DatabaseKey = searchParams.get("db") === "test" ? "test" : getInitialDatabase();
+  const database: DatabaseKey = getDatabaseFromSearch(searchParams.get("db")) || getInitialDatabase();
   const [imagePairs, setImagePairs] = useState<ImagePair[]>([]);
   const [currentPair, setCurrentPair] = useState<ImagePair | null>(null);
   const [totalCount, setTotalCount] = useState(0);
@@ -652,10 +657,10 @@ export function ComparePage() {
                 <button ref={active ? activeItemRef : null} key={item.id} onClick={() => navigate(`/compare/${item.id}?db=${database}`)} className="w-full rounded-lg overflow-hidden transition-all text-left" style={{ background: active ? "#101d30" : "#111b2a", border: `1px solid ${active ? "#3b82f6" : "#1a2332"}` }}>
                   <div className="relative w-full" style={{ height: 64 }}>
                     <div className="absolute inset-y-0 left-0 w-1/2" style={{ background: "#0a0f1a" }}>
-                      {item.original ? <img src={getSmallThumbnail(item.original)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" /> : null}
+                      {item.original ? <img src={getSmallThumbnail(item.original)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" /> : null}
                     </div>
                     <div className="absolute inset-y-0 left-1/2 w-1/2" style={{ background: "#0a0f1a" }}>
-                      {item.result ? <img src={getSmallThumbnail(item.result)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" /> : <div className="absolute inset-0 flex items-center justify-center" style={{ color: "#475569", fontSize: 10 }}>无图</div>}
+                      {item.result ? <img src={getSmallThumbnail(item.result)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" /> : <div className="absolute inset-0 flex items-center justify-center" style={{ color: "#475569", fontSize: 10 }}>无图</div>}
                     </div>
                     <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: "rgba(255,255,255,0.4)" }} />
                     <span className="absolute top-1 left-1 px-1 py-0.5 rounded text-xs" style={{ background: itemStatus.bg, color: itemStatus.color, fontSize: 9 }}>{item.status}</span>
