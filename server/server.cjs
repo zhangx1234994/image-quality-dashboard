@@ -359,24 +359,64 @@ app.get('/api/tasks', async (req, res) => {
     }
 });
 
+function parseImageField(value) {
+    if (!value || value === 'null') {
+        return [];
+    }
+
+    if (Array.isArray(value)) {
+        return value;
+    }
+
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+            return [value];
+        }
+    }
+
+    return [value];
+}
+
+function getImageEntryUrl(entry) {
+    if (!entry) {
+        return '';
+    }
+
+    if (typeof entry === 'string') {
+        return entry;
+    }
+
+    if (typeof entry === 'object') {
+        return entry.ossUrl || entry.url || entry.imageUrl || entry.imgUrl || entry.src || '';
+    }
+
+    return '';
+}
+
+function normalizeImageUrls(values) {
+    return values
+        .map(getImageEntryUrl)
+        .filter((url) => url && typeof url === 'string' && url.startsWith('http'));
+}
+
+function getWorkflowOriginalImages(task) {
+    const workflowParams = parseWorkflowParams(task);
+    return normalizeImageUrls(parseImageField(workflowParams.imageList));
+}
+
 // 处理任务图片的辅助函数
 function processTaskImages(task) {
     let originalImages = [];
     let resultImages = [];
 
-    // 解析原图
+    // 解析原图。6月15日后的新任务不再写 original_images，输入图在 workflow_params.imageList。
     try {
-        if (task.original_images) {
-            if (Array.isArray(task.original_images)) {
-                originalImages = task.original_images;
-            } else if (typeof task.original_images === 'string' && task.original_images !== 'null') {
-                try {
-                    const parsed = JSON.parse(task.original_images);
-                    originalImages = Array.isArray(parsed) ? parsed : [parsed];
-                } catch {
-                    originalImages = [task.original_images];
-                }
-            }
+        originalImages = normalizeImageUrls(parseImageField(task.original_images));
+        if (originalImages.length === 0) {
+            originalImages = getWorkflowOriginalImages(task);
         }
     } catch (e) {
         console.error('解析原图失败:', e.message);
@@ -384,18 +424,7 @@ function processTaskImages(task) {
 
     // 解析结果图
     try {
-        if (task.images) {
-            if (Array.isArray(task.images)) {
-                resultImages = task.images;
-            } else if (typeof task.images === 'string' && task.images !== 'null') {
-                try {
-                    const parsed = JSON.parse(task.images);
-                    resultImages = Array.isArray(parsed) ? parsed : [parsed];
-                } catch {
-                    resultImages = [task.images];
-                }
-            }
-        }
+        resultImages = normalizeImageUrls(parseImageField(task.images));
     } catch (e) {
         console.error('解析结果图失败:', e.message);
     }
@@ -407,8 +436,8 @@ function processTaskImages(task) {
     };
     
     // 只添加需要的图片字段
-    processedTask.originalImages = originalImages.filter(url => url && typeof url === 'string' && url.startsWith('http'));
-    processedTask.resultImages = resultImages.filter(url => url && typeof url === 'string' && url.startsWith('http'));
+    processedTask.originalImages = originalImages;
+    processedTask.resultImages = resultImages;
     
     return processedTask;
 }

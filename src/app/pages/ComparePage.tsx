@@ -29,6 +29,9 @@ type ViewMode = "sidebyside" | "slider" | "overlay" | "diff";
 type DatabaseKey = "prod" | "test";
 
 type Annotation = QualityAnnotation;
+const INITIAL_NEWER_LIMIT = 12;
+const INITIAL_OLDER_LIMIT = 36;
+const LOAD_MORE_LIMIT = 36;
 
 const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   画布扩展: { bg: "rgba(59,130,246,0.12)", text: "#60a5fa", border: "rgba(59,130,246,0.25)" },
@@ -367,8 +370,8 @@ export function ComparePage() {
     setError(null);
 
     const detailParams = new URLSearchParams({ db: database });
-    const newerParams = new URLSearchParams({ db: database, limit: "40", min_id: id || "" });
-    const olderParams = new URLSearchParams({ db: database, limit: "200", cursor_id: id || "" });
+    const newerParams = new URLSearchParams({ db: database, limit: String(INITIAL_NEWER_LIMIT), min_id: id || "" });
+    const olderParams = new URLSearchParams({ db: database, limit: String(INITIAL_OLDER_LIMIT), cursor_id: id || "" });
 
     Promise.all([
       fetch(`/api/image-pairs/${id}?${detailParams.toString()}`, { signal: controller.signal }).then((res) => res.json()),
@@ -463,7 +466,7 @@ export function ComparePage() {
     setLoadingNewer(true);
     try {
       const newestId = Math.max(...allPairs.map((item) => item.id));
-      const params = new URLSearchParams({ db: database, limit: "50", min_id: String(newestId) });
+      const params = new URLSearchParams({ db: database, limit: String(LOAD_MORE_LIMIT), min_id: String(newestId) });
       const data = await fetch(`/api/image-pairs?${params.toString()}`).then((res) => res.json());
       if (!data.success || !Array.isArray(data.data)) return;
 
@@ -483,7 +486,7 @@ export function ComparePage() {
     setLoadingOlder(true);
     try {
       const oldestId = Math.min(...allPairs.map((item) => item.id));
-      const params = new URLSearchParams({ db: database, limit: "50", cursor_id: String(Math.max(0, oldestId - 1)) });
+      const params = new URLSearchParams({ db: database, limit: String(LOAD_MORE_LIMIT), cursor_id: String(Math.max(0, oldestId - 1)) });
       const data = await fetch(`/api/image-pairs?${params.toString()}`).then((res) => res.json());
       if (!data.success || !Array.isArray(data.data)) return;
 
